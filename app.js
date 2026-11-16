@@ -352,9 +352,8 @@ document.addEventListener('DOMContentLoaded', () => {
     startPauseBtn.querySelector('.icon').textContent = '⏸';
     modeStatus.textContent = `Focusing...`;
 
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume();
-    }
+    // Pre-initialize and resume audio context during user gesture to guarantee completion chime works
+    initAudioContext();
 
     timerInterval = setInterval(() => {
       if (timeLeft > 0) {
