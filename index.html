@@ -32,6 +32,13 @@
       </div>
 
       <div class="header-actions">
+        <button id="notifyBtn" class="icon-btn" title="Enable Browser Notifications" aria-label="Enable Browser Notifications">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+            <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+          </svg>
+          <span class="notify-badge-dot hidden" id="notifyBadgeDot"></span>
+        </button>
         <button id="fullscreenBtn" class="icon-btn" title="Toggle Fullscreen" aria-label="Toggle Fullscreen">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
@@ -203,29 +210,77 @@
           </div>
         </div>
 
-        <!-- Ambient Sound Generator Card (Web Audio API - 100% Offline) -->
-        <div class="card sound-card">
+        <!-- Custom MP3 Music Player Card (LocalStorage Persistence) -->
+        <div class="card audio-card">
           <div class="card-header">
             <div class="header-with-badge">
-              <h3>🎵 Calming Soundscape</h3>
-              <span class="badge">Offline</span>
+              <h3>🎵 Custom MP3 Player</h3>
+              <span class="badge" id="storageUsageBadge">0 KB</span>
+            </div>
+            <label for="mp3FileInput" class="btn btn-action upload-btn" title="Upload MP3 Audio Files">
+              <span>+ Upload MP3</span>
+            </label>
+            <input type="file" id="mp3FileInput" accept="audio/*,.mp3,.wav,.ogg,.m4a" multiple class="hidden-file-input" />
+          </div>
+          <p class="sound-desc">Upload your own MP3 songs. All files are saved in localStorage so you can easily change songs and listen offline.</p>
+
+          <!-- Now Playing Card -->
+          <div class="now-playing-panel">
+            <div class="now-playing-row">
+              <div class="equalizer-icon" id="equalizerAnim">
+                <span></span><span></span><span></span><span></span>
+              </div>
+              <div class="now-playing-info">
+                <div class="track-title" id="nowPlayingTitle">No song selected</div>
+                <div class="track-status" id="nowPlayingStatus">Upload or select a track below</div>
+              </div>
+            </div>
+
+            <!-- Progress Scrub Bar -->
+            <div class="audio-progress-container">
+              <span class="audio-time" id="audioCurrentTime">0:00</span>
+              <div class="audio-seek-wrapper">
+                <input type="range" id="audioSeekBar" min="0" max="100" value="0" step="0.1" aria-label="Audio progress scrub" />
+              </div>
+              <span class="audio-time" id="audioTotalDuration">0:00</span>
+            </div>
+
+            <!-- Playback Controls -->
+            <div class="audio-controls-row">
+              <button type="button" id="prevTrackBtn" class="audio-ctrl-btn" title="Previous Song (⏮)" aria-label="Previous Track">
+                ⏮
+              </button>
+              <button type="button" id="playPauseTrackBtn" class="audio-ctrl-btn play-main-btn" title="Play / Pause" aria-label="Play or Pause">
+                <span id="playPauseIcon">▶</span>
+              </button>
+              <button type="button" id="nextTrackBtn" class="audio-ctrl-btn" title="Next Song (⏭)" aria-label="Next Track">
+                ⏭
+              </button>
+              <button type="button" id="loopTrackBtn" class="audio-ctrl-btn loop-btn active" data-loop="all" title="Repeat: All" aria-label="Repeat Mode">
+                🔁
+              </button>
             </div>
           </div>
-          <p class="sound-desc">Synthesized ambient frequencies for cognitive flow.</p>
 
-          <div class="sound-grid">
-            <button class="sound-chip active" data-sound="off">Mute</button>
-            <button class="sound-chip" data-sound="brown">Brown Noise</button>
-            <button class="sound-chip" data-sound="pink">Pink Noise</button>
-            <button class="sound-chip" data-sound="rain">Rain Drops</button>
-            <button class="sound-chip" data-sound="binaural">432Hz Zen</button>
-          </div>
-
+          <!-- Volume Slider -->
           <div class="volume-control">
-            <span class="vol-icon">🔉</span>
-            <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="0.5" aria-label="Volume Slider" />
+            <button type="button" id="muteToggleBtn" class="vol-btn" title="Mute/Unmute" aria-label="Mute or Unmute">🔉</button>
+            <input type="range" id="volumeSlider" min="0" max="1" step="0.05" value="0.7" aria-label="Volume Slider" />
             <span class="vol-icon">🔊</span>
           </div>
+
+          <!-- Playlist / Song Switcher Section -->
+          <div class="playlist-section">
+            <div class="playlist-header">
+              <span class="playlist-title">Your Songs (<span id="trackCountLabel">0</span>)</span>
+              <button type="button" id="clearAllTracksBtn" class="btn-clear-tracks hidden" title="Remove all uploaded tracks">Clear All</button>
+            </div>
+            <div class="playlist-list" id="playlistList">
+              <!-- Dynamically populated songs -->
+            </div>
+          </div>
+
+          <audio id="customAudioElement" preload="auto"></audio>
         </div>
 
         <!-- Inspirational Prompt -->

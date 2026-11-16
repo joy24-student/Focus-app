@@ -352,8 +352,10 @@ document.addEventListener('DOMContentLoaded', () => {
     startPauseBtn.querySelector('.icon').textContent = '⏸';
     modeStatus.textContent = `Focusing...`;
 
-    // Pre-initialize and resume audio context during user gesture to guarantee completion chime works
-    initAudioContext();
+    // Prompt for browser notification permission on first timer start if not decided yet
+    if ('Notification' in window && Notification.permission === 'default') {
+      requestNotificationPermission(false);
+    }
 
     timerInterval = setInterval(() => {
       if (timeLeft > 0) {
@@ -376,7 +378,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function handleTimerComplete() {
     pauseTimer();
-    playNotificationChime();
+
+    // Default sounds removed! Trigger browser notification
+    const isFocus = (currentMode === 'focus');
+    const title = isFocus ? '🎉 Focus Session Complete!' : '⚡ Break Finished!';
+    let bodyText = isFocus
+      ? 'Great job! Time for a well-deserved break.'
+      : 'Break finished! Ready to get back into focus?';
+
+    const focusedTask = tasks.find(t => String(t.id) === String(activeFocusedTaskId));
+    if (isFocus && focusedTask) {
+      bodyText = `Completed focus session on: "${focusedTask.text}"! Take a break.`;
+    }
+
+    sendBrowserNotification(title, bodyText);
+    showToast(`🔔 ${title} ${bodyText}`);
 
     if (currentMode === 'focus') {
       const minsCompleted = Math.round(MODES.focus.duration / 60);
@@ -571,183 +587,628 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --------------------------------------------------------------------------
-  // 8. Procedural Web Audio Ambient Sound Generator (100% Offline)
+  // Helper: Toast Notifications
   // --------------------------------------------------------------------------
-  let audioCtx = null;
-  let activeNodes = [];
-  let masterGain = null;
+  let toastEl = document.querySelector('.app-toast');
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.className = 'app-toast';
+    document.body.appendChild(toastEl);
+  }
+  let toastTimer = null;
 
-  function initAudioContext() {
-    if (!audioCtx) {
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AudioContextClass();
-      masterGain = audioCtx.createGain();
-      const slider = document.getElementById('volumeSlider');
-      masterGain.gain.setValueAtTime(parseFloat(slider.value), audioCtx.currentTime);
-      masterGain.connect(audioCtx.destination);
+  function showToast(message, duration = 3500) {
+    if (!toastEl) return;
+    toastEl.textContent = message;
+    toastEl.classList.add('visible');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toastEl.classList.remove('visible');
+    }, duration);
+  }
+
+  // --------------------------------------------------------------------------
+  // Browser Notifications Support
+  // --------------------------------------------------------------------------
+  const notifyBtn = document.getElementById('notifyBtn');
+  const notifyBadgeDot = document.getElementById('notifyBadgeDot');
+
+  function updateNotificationUI() {
+    if (!notifyBtn) return;
+    if (!('Notification' in window)) {
+      notifyBtn.title = 'Browser notifications not supported';
+      notifyBtn.classList.add('denied');
+      if (notifyBadgeDot) notifyBadgeDot.classList.add('hidden');
+      return;
     }
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume();
+
+    if (Notification.permission === 'granted') {
+      notifyBtn.classList.remove('denied');
+      notifyBtn.classList.add('granted');
+      notifyBtn.title = 'Browser notifications active (Click to test)';
+      if (notifyBadgeDot) notifyBadgeDot.classList.remove('hidden');
+    } else if (Notification.permission === 'denied') {
+      notifyBtn.classList.remove('granted');
+      notifyBtn.classList.add('denied');
+      notifyBtn.title = 'Notifications blocked in browser settings';
+      if (notifyBadgeDot) notifyBadgeDot.classList.add('hidden');
+    } else {
+      notifyBtn.classList.remove('granted', 'denied');
+      notifyBtn.title = 'Click to enable browser notifications';
+      if (notifyBadgeDot) notifyBadgeDot.classList.add('hidden');
     }
   }
 
-  function stopAmbientSound() {
-    activeNodes.forEach(node => {
-      try {
-        if (node.stop) node.stop();
-        if (node.disconnect) node.disconnect();
-      } catch (e) {}
-    });
-    activeNodes = [];
-  }
+  async function requestNotificationPermission(isManual = false) {
+    if (!('Notification' in window)) {
+      if (isManual) showToast('Browser notifications are not supported in this browser.');
+      return false;
+    }
 
-  function createNoiseNode(type) {
-    initAudioContext();
-    const bufferSize = 2 * audioCtx.sampleRate;
-    const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-    const output = buffer.getChannelData(0);
-
-    if (type === 'white') {
-      for (let i = 0; i < bufferSize; i++) {
-        output[i] = Math.random() * 2 - 1;
+    if (Notification.permission === 'granted') {
+      if (isManual) {
+        showToast('Notifications active! Sending test alert...');
+        sendBrowserNotification('🔔 Focus Mood Notifications', 'Browser notifications are working properly!');
       }
-    } else if (type === 'brown') {
-      let lastOut = 0.0;
-      for (let i = 0; i < bufferSize; i++) {
-        const white = Math.random() * 2 - 1;
-        output[i] = (lastOut + 0.02 * white) / 1.02;
-        lastOut = output[i];
-        output[i] *= 3.5;
-      }
-    } else if (type === 'pink') {
-      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
-      for (let i = 0; i < bufferSize; i++) {
-        const white = Math.random() * 2 - 1;
-        b0 = 0.99886 * b0 + white * 0.0555179;
-        b1 = 0.99332 * b1 + white * 0.0750759;
-        b2 = 0.96900 * b2 + white * 0.1538520;
-        b3 = 0.86650 * b3 + white * 0.3104856;
-        b4 = 0.55000 * b4 + white * 0.5329522;
-        b5 = -0.7616 * b5 - white * 0.0168980;
-        output[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
-        output[i] *= 0.11;
-        b6 = white * 0.115926;
-      }
+      updateNotificationUI();
+      return true;
     }
 
-    const whiteNoiseSource = audioCtx.createBufferSource();
-    whiteNoiseSource.buffer = buffer;
-    whiteNoiseSource.loop = true;
-    return whiteNoiseSource;
-  }
-
-  function playAmbientSound(type) {
-    stopAmbientSound();
-    if (type === 'off') return;
-
-    initAudioContext();
-
-    if (type === 'brown') {
-      const source = createNoiseNode('brown');
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(450, audioCtx.currentTime);
-
-      source.connect(filter);
-      filter.connect(masterGain);
-      source.start();
-      activeNodes.push(source, filter);
-    } 
-    else if (type === 'pink') {
-      const source = createNoiseNode('pink');
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(1200, audioCtx.currentTime);
-
-      source.connect(filter);
-      filter.connect(masterGain);
-      source.start();
-      activeNodes.push(source, filter);
-    } 
-    else if (type === 'rain') {
-      const source = createNoiseNode('pink');
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(800, audioCtx.currentTime);
-      filter.Q.setValueAtTime(1.2, audioCtx.currentTime);
-
-      const rainGain = audioCtx.createGain();
-      rainGain.gain.setValueAtTime(0.7, audioCtx.currentTime);
-
-      source.connect(filter);
-      filter.connect(rainGain);
-      rainGain.connect(masterGain);
-      source.start();
-      activeNodes.push(source, filter, rainGain);
-    } 
-    else if (type === 'binaural') {
-      const osc1 = audioCtx.createOscillator();
-      const osc2 = audioCtx.createOscillator();
-      const oscGain = audioCtx.createGain();
-
-      osc1.type = 'sine';
-      osc1.frequency.setValueAtTime(432, audioCtx.currentTime);
-
-      osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(436, audioCtx.currentTime);
-
-      oscGain.gain.setValueAtTime(0.25, audioCtx.currentTime);
-
-      osc1.connect(oscGain);
-      osc2.connect(oscGain);
-      oscGain.connect(masterGain);
-
-      osc1.start();
-      osc2.start();
-      activeNodes.push(osc1, osc2, oscGain);
+    if (Notification.permission === 'denied') {
+      if (isManual) {
+        showToast('Notifications are blocked. Please enable them in your browser site permissions.');
+      }
+      updateNotificationUI();
+      return false;
     }
-  }
 
-  function playNotificationChime() {
     try {
-      initAudioContext();
-      const chimeOsc = audioCtx.createOscillator();
-      const chimeGain = audioCtx.createGain();
-      const now = audioCtx.currentTime;
-
-      chimeOsc.type = 'sine';
-      chimeOsc.frequency.setValueAtTime(587.33, now); // D5
-      chimeOsc.frequency.exponentialRampToValueAtTime(880, now + 0.3); // A5
-
-      chimeGain.gain.setValueAtTime(0, now);
-      chimeGain.gain.linearRampToValueAtTime(0.4, now + 0.05);
-      chimeGain.gain.exponentialRampToValueAtTime(0.001, now + 1.2);
-
-      chimeOsc.connect(chimeGain);
-      chimeGain.connect(masterGain);
-
-      chimeOsc.start(now);
-      chimeOsc.stop(now + 1.2);
+      const permission = await Notification.requestPermission();
+      updateNotificationUI();
+      if (permission === 'granted') {
+        showToast('🔔 Browser notifications enabled!');
+        sendBrowserNotification('🎉 Notifications Enabled', 'You will be notified when your focus & break sessions complete.');
+        return true;
+      } else {
+        if (isManual) showToast('Notifications were not granted.');
+        return false;
+      }
     } catch (e) {
-      console.warn('Audio chime could not play:', e);
+      console.warn('Notification permission error:', e);
+      return false;
     }
   }
 
-  const soundChips = document.querySelectorAll('.sound-chip');
-  soundChips.forEach(chip => {
-    chip.addEventListener('click', () => {
-      soundChips.forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
-      playAmbientSound(chip.dataset.sound);
-    });
-  });
+  function sendBrowserNotification(title, body) {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try {
+      const svgIcon = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="%2310b981"/><path d="M35 50 L45 60 L65 40" stroke="white" stroke-width="8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+      const n = new Notification(title, {
+        body,
+        icon: svgIcon,
+        tag: 'focus-mood-alert',
+        renotify: true
+      });
+      n.onclick = () => {
+        window.focus();
+        n.close();
+      };
+    } catch (e) {
+      console.warn('Could not display notification:', e);
+    }
+  }
 
+  if (notifyBtn) {
+    notifyBtn.addEventListener('click', () => {
+      requestNotificationPermission(true);
+    });
+  }
+
+  // --------------------------------------------------------------------------
+  // 8. Custom MP3 Music Player (LocalStorage Persistence & Easy Song Switching)
+  // --------------------------------------------------------------------------
+  const customAudioElement = document.getElementById('customAudioElement');
+  const mp3FileInput = document.getElementById('mp3FileInput');
+  const nowPlayingTitle = document.getElementById('nowPlayingTitle');
+  const nowPlayingStatus = document.getElementById('nowPlayingStatus');
+  const equalizerAnim = document.getElementById('equalizerAnim');
+  const audioCurrentTime = document.getElementById('audioCurrentTime');
+  const audioTotalDuration = document.getElementById('audioTotalDuration');
+  const audioSeekBar = document.getElementById('audioSeekBar');
+  const playPauseTrackBtn = document.getElementById('playPauseTrackBtn');
+  const playPauseIcon = document.getElementById('playPauseIcon');
+  const prevTrackBtn = document.getElementById('prevTrackBtn');
+  const nextTrackBtn = document.getElementById('nextTrackBtn');
+  const loopTrackBtn = document.getElementById('loopTrackBtn');
   const volumeSlider = document.getElementById('volumeSlider');
+  const muteToggleBtn = document.getElementById('muteToggleBtn');
+  const playlistList = document.getElementById('playlistList');
+  const trackCountLabel = document.getElementById('trackCountLabel');
+  const storageUsageBadge = document.getElementById('storageUsageBadge');
+  const clearAllTracksBtn = document.getElementById('clearAllTracksBtn');
+
+  let customTracks = [];
+  try {
+    const savedTracks = localStorage.getItem('fm_custom_tracks');
+    customTracks = savedTracks ? JSON.parse(savedTracks) : [];
+  } catch (e) {
+    customTracks = [];
+  }
+
+  let currentTrackId = localStorage.getItem('fm_active_track_id') || null;
+  let loopMode = localStorage.getItem('fm_loop_mode') || 'all'; // 'all', 'one', 'off'
+  let savedVolume = parseFloat(localStorage.getItem('fm_audio_volume') || '0.7');
+  if (isNaN(savedVolume) || savedVolume < 0 || savedVolume > 1) savedVolume = 0.7;
+  let isSeeking = false;
+  let previousVolume = savedVolume > 0 ? savedVolume : 0.7;
+
+  if (customAudioElement) {
+    customAudioElement.volume = savedVolume;
+  }
+  if (volumeSlider) {
+    volumeSlider.value = savedVolume;
+  }
+
+  function formatAudioDuration(secs) {
+    if (isNaN(secs) || secs < 0 || !isFinite(secs)) return '0:00';
+    const m = Math.floor(secs / 60);
+    const s = Math.floor(secs % 60);
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  function formatBytes(bytes) {
+    if (bytes === 0) return '0 KB';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  function calculateStorageUsage() {
+    let totalChars = 0;
+    try {
+      const saved = localStorage.getItem('fm_custom_tracks') || '';
+      totalChars = saved.length;
+    } catch (e) {}
+    return formatBytes(totalChars);
+  }
+
+  function updateStorageBadge() {
+    if (storageUsageBadge) {
+      storageUsageBadge.textContent = calculateStorageUsage();
+    }
+  }
+
+  function saveCustomTracks() {
+    try {
+      localStorage.setItem('fm_custom_tracks', JSON.stringify(customTracks));
+      updateStorageBadge();
+      return true;
+    } catch (e) {
+      console.error('LocalStorage save error:', e);
+      if (e.name === 'QuotaExceededError' || e.code === 22) {
+        showToast('⚠️ Storage limit reached! Browser localStorage allows ~5MB. Delete an existing song or upload a smaller audio file.');
+      } else {
+        showToast('⚠️ Could not save song to localStorage.');
+      }
+      return false;
+    }
+  }
+
+  function getCurrentTrackIndex() {
+    return customTracks.findIndex(t => String(t.id) === String(currentTrackId));
+  }
+
+  function updateLoopButtonUI() {
+    if (!loopTrackBtn) return;
+    loopTrackBtn.dataset.loop = loopMode;
+    if (loopMode === 'all') {
+      loopTrackBtn.textContent = '🔁';
+      loopTrackBtn.title = 'Repeat Mode: All Songs';
+      loopTrackBtn.classList.add('active');
+    } else if (loopMode === 'one') {
+      loopTrackBtn.textContent = '🔂';
+      loopTrackBtn.title = 'Repeat Mode: Current Song';
+      loopTrackBtn.classList.add('active');
+    } else {
+      loopTrackBtn.textContent = '➡️';
+      loopTrackBtn.title = 'Repeat Mode: Off (Stop at end)';
+      loopTrackBtn.classList.remove('active');
+    }
+  }
+
+  function renderPlaylist() {
+    if (!playlistList) return;
+    playlistList.innerHTML = '';
+
+    const count = customTracks.length;
+    if (trackCountLabel) trackCountLabel.textContent = count;
+    if (clearAllTracksBtn) clearAllTracksBtn.classList.toggle('hidden', count === 0);
+    updateStorageBadge();
+    updateLoopButtonUI();
+
+    if (count === 0) {
+      playlistList.innerHTML = `
+        <div class="playlist-empty">
+          No custom songs uploaded yet.<br>
+          <label for="mp3FileInput" class="playlist-empty-upload">+ Upload MP3 audio</label> to focus with your music.
+        </div>
+      `;
+      if (nowPlayingTitle) nowPlayingTitle.textContent = 'No song selected';
+      if (nowPlayingStatus) nowPlayingStatus.textContent = 'Upload or select a track below';
+      if (equalizerAnim) equalizerAnim.classList.remove('playing');
+      if (playPauseIcon) playPauseIcon.textContent = '▶';
+      if (playPauseTrackBtn) playPauseTrackBtn.title = 'Play';
+      return;
+    }
+
+    // Verify currentTrackId exists in playlist
+    let activeTrack = customTracks.find(t => String(t.id) === String(currentTrackId));
+    if (!activeTrack && customTracks.length > 0) {
+      activeTrack = customTracks[0];
+      currentTrackId = activeTrack.id;
+      localStorage.setItem('fm_active_track_id', currentTrackId);
+    }
+
+    if (activeTrack) {
+      if (nowPlayingTitle) nowPlayingTitle.textContent = activeTrack.name;
+      const isAudioPlaying = customAudioElement && !customAudioElement.paused && customAudioElement.src;
+      if (nowPlayingStatus) {
+        nowPlayingStatus.textContent = isAudioPlaying ? 'Playing' : (activeTrack.size ? `${activeTrack.size} • Ready` : 'Ready');
+      }
+    }
+
+    customTracks.forEach((track) => {
+      const isActive = String(track.id) === String(currentTrackId);
+      const isPlaying = isActive && customAudioElement && !customAudioElement.paused;
+
+      const item = document.createElement('div');
+      item.className = `playlist-item ${isActive ? 'active' : ''}`;
+      item.dataset.id = track.id;
+
+      item.innerHTML = `
+        <div class="playlist-item-left">
+          <span class="playlist-track-icon">${isPlaying ? '🔊' : '🎵'}</span>
+          <div class="playlist-track-info">
+            <span class="playlist-track-name" title="${escapeHtml(track.name)}">${escapeHtml(track.name)}</span>
+            <span class="playlist-track-size">${track.size || 'Audio file'}</span>
+          </div>
+        </div>
+        <div class="playlist-item-actions">
+          <span class="playlist-play-icon" title="${isPlaying ? 'Playing' : 'Play this song'}">${isPlaying ? '⏸' : '▶'}</span>
+          <button type="button" class="playlist-del-btn" title="Delete song" aria-label="Delete song">✕</button>
+        </div>
+      `;
+
+      // Click to select and switch song easily
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.playlist-del-btn')) return;
+
+        if (String(track.id) === String(currentTrackId)) {
+          if (customAudioElement.paused || !customAudioElement.src) {
+            playTrack(track);
+          } else {
+            pauseTrack();
+          }
+        } else {
+          currentTrackId = track.id;
+          localStorage.setItem('fm_active_track_id', currentTrackId);
+          playTrack(track);
+        }
+      });
+
+      // Delete track
+      const delBtn = item.querySelector('.playlist-del-btn');
+      delBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteTrack(track.id);
+      });
+
+      playlistList.appendChild(item);
+    });
+  }
+
+  function playTrack(track) {
+    if (!track || !track.data || !customAudioElement) return;
+
+    currentTrackId = track.id;
+    localStorage.setItem('fm_active_track_id', currentTrackId);
+
+    if (customAudioElement.src !== track.data) {
+      customAudioElement.src = track.data;
+    }
+
+    customAudioElement.play().then(() => {
+      if (playPauseIcon) playPauseIcon.textContent = '⏸';
+      if (playPauseTrackBtn) playPauseTrackBtn.title = 'Pause';
+      if (equalizerAnim) equalizerAnim.classList.add('playing');
+      if (nowPlayingTitle) nowPlayingTitle.textContent = track.name;
+      if (nowPlayingStatus) nowPlayingStatus.textContent = 'Playing';
+      renderPlaylist();
+    }).catch(err => {
+      console.warn('Audio play error:', err);
+      showToast('⚠️ Tap play to start audio playback');
+    });
+  }
+
+  function pauseTrack() {
+    if (!customAudioElement) return;
+    customAudioElement.pause();
+    if (playPauseIcon) playPauseIcon.textContent = '▶';
+    if (playPauseTrackBtn) playPauseTrackBtn.title = 'Play';
+    if (equalizerAnim) equalizerAnim.classList.remove('playing');
+    if (nowPlayingStatus) nowPlayingStatus.textContent = 'Paused';
+    renderPlaylist();
+  }
+
+  function deleteTrack(trackId) {
+    const isCurrent = String(trackId) === String(currentTrackId);
+    if (isCurrent && customAudioElement) {
+      customAudioElement.pause();
+      customAudioElement.removeAttribute('src');
+      if (equalizerAnim) equalizerAnim.classList.remove('playing');
+      if (playPauseIcon) playPauseIcon.textContent = '▶';
+    }
+
+    customTracks = customTracks.filter(t => String(t.id) !== String(trackId));
+    saveCustomTracks();
+
+    if (isCurrent) {
+      if (customTracks.length > 0) {
+        currentTrackId = customTracks[0].id;
+        localStorage.setItem('fm_active_track_id', currentTrackId);
+      } else {
+        currentTrackId = null;
+        localStorage.removeItem('fm_active_track_id');
+      }
+    }
+
+    renderPlaylist();
+    showToast('🗑 Song removed');
+  }
+
+  function playNextTrack() {
+    if (customTracks.length === 0) return;
+    const currentIndex = getCurrentTrackIndex();
+    let nextIndex = currentIndex + 1;
+    if (nextIndex >= customTracks.length) {
+      nextIndex = 0;
+    }
+    const nextTrack = customTracks[nextIndex];
+    if (nextTrack) {
+      playTrack(nextTrack);
+    }
+  }
+
+  function playPrevTrack() {
+    if (customTracks.length === 0) return;
+    const currentIndex = getCurrentTrackIndex();
+    let prevIndex = currentIndex - 1;
+    if (prevIndex < 0) {
+      prevIndex = customTracks.length - 1;
+    }
+    const prevTrack = customTracks[prevIndex];
+    if (prevTrack) {
+      playTrack(prevTrack);
+    }
+  }
+
+  // File Upload Processing
+  if (mp3FileInput) {
+    mp3FileInput.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files);
+      if (!files || files.length === 0) return;
+
+      let processed = 0;
+      let addedCount = 0;
+      let hadQuotaError = false;
+
+      files.forEach(file => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          processed++;
+          const base64Data = event.target.result;
+          const newTrack = {
+            id: 'track_' + Date.now() + '_' + Math.floor(Math.random() * 100000),
+            name: file.name,
+            size: formatBytes(file.size),
+            data: base64Data,
+            addedAt: Date.now()
+          };
+
+          customTracks.push(newTrack);
+          const saved = saveCustomTracks();
+          if (saved) {
+            addedCount++;
+            if (!currentTrackId) {
+              currentTrackId = newTrack.id;
+              localStorage.setItem('fm_active_track_id', currentTrackId);
+            }
+          } else {
+            customTracks.pop(); // Revert
+            hadQuotaError = true;
+          }
+
+          if (processed === files.length) {
+            renderPlaylist();
+            mp3FileInput.value = '';
+            if (addedCount > 0) {
+              showToast(`🎵 Uploaded ${addedCount} song${addedCount > 1 ? 's' : ''}! Saved in localStorage.`);
+            }
+            if (hadQuotaError) {
+              showToast('⚠️ Storage limit reached (~5MB in browser localStorage). Could not store all songs.');
+            }
+          }
+        };
+
+        reader.onerror = () => {
+          processed++;
+          showToast(`⚠️ Error reading ${file.name}`);
+        };
+
+        reader.readAsDataURL(file);
+      });
+    });
+  }
+
+  // Play/Pause Button
+  if (playPauseTrackBtn) {
+    playPauseTrackBtn.addEventListener('click', () => {
+      if (customTracks.length === 0) {
+        showToast('Please upload an MP3 song first!');
+        if (mp3FileInput) mp3FileInput.click();
+        return;
+      }
+
+      let activeTrack = customTracks.find(t => String(t.id) === String(currentTrackId));
+      if (!activeTrack) {
+        activeTrack = customTracks[0];
+        currentTrackId = activeTrack.id;
+        localStorage.setItem('fm_active_track_id', currentTrackId);
+      }
+
+      if (customAudioElement.paused || !customAudioElement.src) {
+        playTrack(activeTrack);
+      } else {
+        pauseTrack();
+      }
+    });
+  }
+
+  if (nextTrackBtn) {
+    nextTrackBtn.addEventListener('click', () => {
+      playNextTrack();
+    });
+  }
+
+  if (prevTrackBtn) {
+    prevTrackBtn.addEventListener('click', () => {
+      playPrevTrack();
+    });
+  }
+
+  // Loop Mode Toggle
+  if (loopTrackBtn) {
+    loopTrackBtn.addEventListener('click', () => {
+      if (loopMode === 'all') {
+        loopMode = 'one';
+      } else if (loopMode === 'one') {
+        loopMode = 'off';
+      } else {
+        loopMode = 'all';
+      }
+      localStorage.setItem('fm_loop_mode', loopMode);
+      updateLoopButtonUI();
+      showToast(`Repeat mode: ${loopMode === 'all' ? 'All Songs' : loopMode === 'one' ? 'Current Song' : 'Off'}`);
+    });
+  }
+
+  // Clear all tracks
+  if (clearAllTracksBtn) {
+    clearAllTracksBtn.addEventListener('click', () => {
+      if (confirm('Are you sure you want to remove all uploaded songs from localStorage?')) {
+        if (customAudioElement) {
+          customAudioElement.pause();
+          customAudioElement.removeAttribute('src');
+        }
+        customTracks = [];
+        currentTrackId = null;
+        localStorage.removeItem('fm_custom_tracks');
+        localStorage.removeItem('fm_active_track_id');
+        renderPlaylist();
+        showToast('All songs removed from storage');
+      }
+    });
+  }
+
+  // Native Audio Events
+  if (customAudioElement) {
+    customAudioElement.addEventListener('timeupdate', () => {
+      if (!isSeeking && customAudioElement.duration) {
+        const pct = (customAudioElement.currentTime / customAudioElement.duration) * 100;
+        if (audioSeekBar) audioSeekBar.value = pct;
+        if (audioCurrentTime) audioCurrentTime.textContent = formatAudioDuration(customAudioElement.currentTime);
+      }
+    });
+
+    customAudioElement.addEventListener('loadedmetadata', () => {
+      if (audioTotalDuration) {
+        audioTotalDuration.textContent = formatAudioDuration(customAudioElement.duration);
+      }
+    });
+
+    customAudioElement.addEventListener('ended', () => {
+      if (loopMode === 'one') {
+        customAudioElement.currentTime = 0;
+        customAudioElement.play();
+      } else if (loopMode === 'all') {
+        playNextTrack();
+      } else {
+        // Off
+        const currentIndex = getCurrentTrackIndex();
+        if (currentIndex < customTracks.length - 1) {
+          playNextTrack();
+        } else {
+          pauseTrack();
+          customAudioElement.currentTime = 0;
+          if (audioSeekBar) audioSeekBar.value = 0;
+          if (audioCurrentTime) audioCurrentTime.textContent = '0:00';
+        }
+      }
+    });
+
+    customAudioElement.addEventListener('error', (e) => {
+      console.warn('Audio playback error:', e);
+      if (equalizerAnim) equalizerAnim.classList.remove('playing');
+      if (playPauseIcon) playPauseIcon.textContent = '▶';
+    });
+  }
+
+  // Seek bar scrub
+  if (audioSeekBar) {
+    audioSeekBar.addEventListener('input', () => {
+      isSeeking = true;
+      if (customAudioElement && customAudioElement.duration) {
+        const time = (audioSeekBar.value / 100) * customAudioElement.duration;
+        if (audioCurrentTime) audioCurrentTime.textContent = formatAudioDuration(time);
+      }
+    });
+
+    audioSeekBar.addEventListener('change', () => {
+      if (customAudioElement && customAudioElement.duration) {
+        customAudioElement.currentTime = (audioSeekBar.value / 100) * customAudioElement.duration;
+      }
+      isSeeking = false;
+    });
+  }
+
+  // Volume Slider & Mute Toggle
   if (volumeSlider) {
     volumeSlider.addEventListener('input', (e) => {
-      if (masterGain && audioCtx) {
-        masterGain.gain.setValueAtTime(parseFloat(e.target.value), audioCtx.currentTime);
+      const val = parseFloat(e.target.value);
+      if (customAudioElement) customAudioElement.volume = val;
+      localStorage.setItem('fm_audio_volume', val);
+      if (muteToggleBtn) {
+        muteToggleBtn.textContent = val === 0 ? '🔇' : (val < 0.5 ? '🔉' : '🔊');
       }
+    });
+  }
+
+  if (muteToggleBtn) {
+    muteToggleBtn.addEventListener('click', () => {
+      if (!customAudioElement) return;
+      if (customAudioElement.volume > 0) {
+        previousVolume = customAudioElement.volume;
+        customAudioElement.volume = 0;
+        if (volumeSlider) volumeSlider.value = 0;
+        muteToggleBtn.textContent = '🔇';
+      } else {
+        const restoreVal = previousVolume > 0 ? previousVolume : 0.7;
+        customAudioElement.volume = restoreVal;
+        if (volumeSlider) volumeSlider.value = restoreVal;
+        muteToggleBtn.textContent = restoreVal < 0.5 ? '🔉' : '🔊';
+      }
+      localStorage.setItem('fm_audio_volume', customAudioElement.volume);
     });
   }
 
@@ -974,4 +1435,6 @@ document.addEventListener('DOMContentLoaded', () => {
   renderDaywiseTracker();
   renderTasks();
   updateDisplay();
+  updateNotificationUI();
+  renderPlaylist();
 });
